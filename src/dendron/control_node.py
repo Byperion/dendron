@@ -200,4 +200,122 @@ class ControlNode(TreeNode):
         """
         for child in self.children:
             child.reset()
+
+
+class ParallelNode(ControlNode):
+    """
+    A Parallel node is a control node that ticks all its children concurrently.
+    
+    The node's policy parameter determines how the node reports its status:
+    - 'success_on_all': Only succeeds when all children succeed, fails if any child fails
+    - 'success_on_one': Succeeds when at least one child succeeds, fails if all children fail
+    - 'success_on_all_or_one_failure': Succeeds only when all children succeed,
+                                       fails if any child fails
+    
+    Example:
+        # Create the AsyncAction nodes
+        async_node_1 = AsyncAction("AsyncTask1", async_task_1)
+        async_node_2 = AsyncAction("AsyncTask2", async_task_2)
+
+        # Create a Parallel node with the AsyncAction nodes as children
+        # Using "success_on_all" policy (tree succeeds only if both tasks succeed)
+        parallel_node = Parallel([async_node_1, async_node_2], name="ParallelTasks", policy="success_on_all")
+
+        # Create the behavior tree with the Parallel node as the root
+        tree = BehaviorTree("AsyncConcurrentExample", parallel_node)
+    
+    Args:
+        children (`List[TreeNode]`):
+            The list of children to execute in parallel.
+        name (`str`):
+            The name of this node.
+        policy (`str`):
+            The policy to use for determining success/failure.
+    """
+    
+    def __init__(self, 
+                children: List[TreeNode] = [], 
+                name: str = "parallel",
+                policy: str = "success_on_all") -> None:
+        super().__init__(children, name)
+        
+        self.policy = policy
+        # Dictionary to track child nodes that are running
+        self.running_children = {}
+        # Dictionary to store the status of completed child nodes
+        self.completed_children = {}
+        
+    def reset(self) -> None:
+        """
+        Reset this node and all its children.
+        """
+        self.running_children = {}
+        self.completed_children = {}
+        super().reset()
+        
+    def tick(self) -> NodeStatus:
+        """
+        Tick all children and update their statuses.
+        
+        The return status depends on the node's policy and the current status
+        of all children.
+        
+        Returns:
+            `NodeStatus`: The status of this node based on its children's statuses.
+        """
+        n_children = self.children_count()
+        self.set_status(NodeStatus.RUNNING)
+        
+        # First pass: Tick all children that are not completed
+        for i, child in enumerate(self.children):
+            if i not in self.completed_children:
+                if i not in self.running_children:
+                    self.running_children[i] = True
+                
+                # Execute the child
+                child_status = child.execute_tick()
+                
+                # If the child is done, move it to completed
+                if child_status != NodeStatus.RUNNING:
+                    self.completed_children[i] = child_status
+                    self.running_children.pop(i, None)
+        
+        # Count success and failure children
+        success_count = sum(1 for status in self.completed_children.values() 
+                           if status == NodeStatus.SUCCESS)
+        failure_count = sum(1 for status in self.completed_children.values() 
+                           if status == NodeStatus.FAILURE)
+        completed_count = len(self.completed_children)
+        
+        # Apply the policy
+        if self.policy == "success_on_all":
+            # Return SUCCESS only if all children succeeded
+            if completed_count == n_children:
+                if success_count == n_children:
+                    self.reset()
+                    return NodeStatus.SUCCESS
+                else:
+                    self.reset()
+                    return NodeStatus.FAILURE
+        elif self.policy == "success_on_one":
+            # Return SUCCESS if at least one child succeeded
+            if success_count > 0:
+                self.reset()
+                return NodeStatus.SUCCESS
+            # Return FAILURE if all children failed
+            elif completed_count == n_children:
+                self.reset()
+                return NodeStatus.FAILURE
+        elif self.policy == "success_on_all_or_one_failure":
+            # Return FAILURE as soon as a child fails
+            if failure_count > 0:
+                self.reset()
+                return NodeStatus.FAILURE
+            # Return SUCCESS if all children succeeded
+            elif completed_count == n_children:
+                self.reset()
+                return NodeStatus.SUCCESS
+        
+        # If we get here, some children are still running
+        return NodeStatus.RUNNING
     
