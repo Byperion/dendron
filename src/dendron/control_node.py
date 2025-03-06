@@ -423,6 +423,15 @@ class ParallelNode(ControlNode):
             elif completed_count == n_children:
                 self.reset()
                 return NodeStatus.FAILURE
+        elif self.policy == "success_on_one_run_all":
+            # Return SUCCESS if one child succeeded
+            if completed_count == n_children:
+                if success_count > 0:
+                    self.reset()
+                    return NodeStatus.SUCCESS
+                else:
+                    self.reset()
+                    return NodeStatus.FAILURE
         elif self.policy == "success_on_all_or_one_failure":
             # Return FAILURE as soon as a child fails
             if failure_count > 0:
